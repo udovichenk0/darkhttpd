@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<results version="2">
+    <cppcheck version="2.7"/>
+    <errors>
+        <error id="toomanyconfigs" severity="information" msg="Too many #ifdef configurations - cppcheck only checks 12 of 14 configurations. Use --force to check all configurations." verbose="The checking of the file will be interrupted because there are too many #ifdef configurations. Checking of all #ifdef configurations can be forced by --force command line option or from GUI preferences. However that may increase the checking time." cwe="398">
+            <location file="darkhttpd.c" line="0" column="0"/>
+        </error>
+        <error id="unusedStructMember" severity="style" msg="struct member &apos;conn_list_head::lh_first&apos; is never used." verbose="struct member &apos;conn_list_head::lh_first&apos; is never used." cwe="563" file0="darkhttpd.c">
+            <location file="darkhttpd.c" line="239" column="8"/>
+            <symbol>conn_list_head::lh_first</symbol>
+        </error>
+        <error id="ConfigurationNotChecked" severity="information" msg="Skipping configuration &apos;NAME_MAX&apos; since the value of &apos;NAME_MAX&apos; is unknown. Use -D if you want to check it. You can use -U to skip it explicitly." verbose="Skipping configuration &apos;NAME_MAX&apos; since the value of &apos;NAME_MAX&apos; is unknown. Use -D if you want to check it. You can use -U to skip it explicitly.">
+            <location file="darkhttpd.c" line="2024" column="0"/>
+        </error>
+        <error id="ConfigurationNotChecked" severity="information" msg="Skipping configuration &apos;NAME_MAX&apos; since the value of &apos;NAME_MAX&apos; is unknown. Use -D if you want to check it. You can use -U to skip it explicitly." verbose="Skipping configuration &apos;NAME_MAX&apos; since the value of &apos;NAME_MAX&apos; is unknown. Use -D if you want to check it. You can use -U to skip it explicitly.">
+            <location file="darkhttpd.c" line="2039" column="0"/>
+        </error>
+        <error id="ConfigurationNotChecked" severity="information" msg="Skipping configuration &apos;NAME_MAX&apos; since the value of &apos;NAME_MAX&apos; is unknown. Use -D if you want to check it. You can use -U to skip it explicitly." verbose="Skipping configuration &apos;NAME_MAX&apos; since the value of &apos;NAME_MAX&apos; is unknown. Use -D if you want to check it. You can use -U to skip it explicitly.">
+            <location file="darkhttpd.c" line="2214" column="0"/>
+        </error>
+        <error id="ConfigurationNotChecked" severity="information" msg="Skipping configuration &apos;O_EXCL;O_EXLOCK&apos; since the value of &apos;O_EXLOCK&apos; is unknown. Use -D if you want to check it. You can use -U to skip it explicitly." verbose="Skipping configuration &apos;O_EXCL;O_EXLOCK&apos; since the value of &apos;O_EXLOCK&apos; is unknown. Use -D if you want to check it. You can use -U to skip it explicitly.">
+            <location file="darkhttpd.c" line="3055" column="0"/>
+        </error>
+        <error id="nullPointerRedundantCheck" severity="warning" msg="Either the condition &apos;!p&apos; is redundant or there is possible null pointer dereference: p." verbose="Either the condition &apos;!p&apos; is redundant or there is possible null pointer dereference: p." cwe="476" file0="darkhttpd.c">
+            <location file="darkhttpd.c" line="1182" column="24" info="Null pointer dereference"/>
+            <location file="darkhttpd.c" line="1180" column="17" info="Assuming that condition &apos;!p&apos; is not redundant"/>
+            <symbol>p</symbol>
+        </error>
+        <error id="nullPointerRedundantCheck" severity="warning" msg="Either the condition &apos;!g&apos; is redundant or there is possible null pointer dereference: g." verbose="Either the condition &apos;!g&apos; is redundant or there is possible null pointer dereference: g." cwe="476" file0="darkhttpd.c">
+            <location file="darkhttpd.c" line="1195" column="24" info="Null pointer dereference"/>
+            <location file="darkhttpd.c" line="1192" column="17" info="Assuming that condition &apos;!g&apos; is not redundant"/>
+            <symbol>g</symbol>
+        </error>
+        <error id="sizeofFunctionCall" severity="warning" msg="Found function call inside sizeof()." verbose="Found function call inside sizeof()." cwe="682" file0="darkhttpd.c">
+            <location file="darkhttpd.c" line="2254" column="5"/>
+        </error>
+        <error id="variableScope" severity="style" msg="The scope of the variable &apos;fd&apos; can be reduced." verbose="The scope of the variable &apos;fd&apos; can be reduced. Warning: Be careful when fixing this message, especially when there are inner loops. Here is an example where cppcheck will write that the scope for &apos;i&apos; can be reduced:\012void f(int x)\012{\012    int i = 0;\012    if (x) {\012        // it&apos;s safe to move &apos;int i = 0;&apos; here\012        for (int n = 0; n &lt; 10; ++n) {\012            // it is possible but not safe to move &apos;int i = 0;&apos; here\012            do_something(&amp;i);\012        }\012    }\012}\012When you see this message it is always safe to reduce the variable scope 1 level." cwe="398" file0="devel/bench.c">
+            <location file="devel/bench.c" line="35" column="7"/>
+            <symbol>fd</symbol>
+        </error>
+        <error id="variableScope" severity="style" msg="The scope of the variable &apos;rcvd&apos; can be reduced." verbose="The scope of the variable &apos;rcvd&apos; can be reduced. Warning: Be careful when fixing this message, especially when there are inner loops. Here is an example where cppcheck will write that the scope for &apos;i&apos; can be reduced:\012void f(int x)\012{\012    int i = 0;\012    if (x) {\012        // it&apos;s safe to move &apos;int i = 0;&apos; here\012        for (int n = 0; n &lt; 10; ++n) {\012            // it is possible but not safe to move &apos;int i = 0;&apos; here\012            do_something(&amp;i);\012        }\012    }\012}\012When you see this message it is always safe to reduce the variable scope 1 level." cwe="398" file0="devel/bench.c">
+            <location file="devel/bench.c" line="40" column="11"/>
+            <symbol>rcvd</symbol>
+        </error>
+        <error id="variableScope" severity="style" msg="The scope of the variable &apos;sent&apos; can be reduced." verbose="The scope of the variable &apos;sent&apos; can be reduced. Warning: Be careful when fixing this message, especially when there are inner loops. Here is an example where cppcheck will write that the scope for &apos;i&apos; can be reduced:\012void f(int x)\012{\012    int i = 0;\012    if (x) {\012        // it&apos;s safe to move &apos;int i = 0;&apos; here\012        for (int n = 0; n &lt; 10; ++n) {\012            // it is possible but not safe to move &apos;int i = 0;&apos; here\012            do_something(&amp;i);\012        }\012    }\012}\012When you see this message it is always safe to reduce the variable scope 1 level." cwe="398" file0="devel/bench.c">
+            <location file="devel/bench.c" line="40" column="17"/>
+            <symbol>sent</symbol>
+        </error>
+        <error id="toomanyconfigs" severity="information" msg="Too many #ifdef configurations - cppcheck only checks 12 of 14 configurations. Use --force to check all configurations." verbose="The checking of the file will be interrupted because there are too many #ifdef configurations. Checking of all #ifdef configurations can be forced by --force command line option or from GUI preferences. However that may increase the checking time." cwe="398">
+            <location file="devel/fuzz_make_safe_uri.c" line="0" column="0"/>
+        </error>
+        <error id="toomanyconfigs" severity="information" msg="Too many #ifdef configurations - cppcheck only checks 12 of 14 configurations. Use --force to check all configurations." verbose="The checking of the file will be interrupted because there are too many #ifdef configurations. Checking of all #ifdef configurations can be forced by --force command line option or from GUI preferences. However that may increase the checking time." cwe="398">
+            <location file="devel/fuzz_parse_request.c" line="0" column="0"/>
+        </error>
+        <error id="toomanyconfigs" severity="information" msg="Too many #ifdef configurations - cppcheck only checks 12 of 14 configurations. Use --force to check all configurations." verbose="The checking of the file will be interrupted because there are too many #ifdef configurations. Checking of all #ifdef configurations can be forced by --force command line option or from GUI preferences. However that may increase the checking time." cwe="398">
+            <location file="devel/test_make_safe_uri.c" line="0" column="0"/>
+        </error>
+        <error id="toomanyconfigs" severity="information" msg="Too many #ifdef configurations - cppcheck only checks 12 of 14 configurations. Use --force to check all configurations." verbose="The checking of the file will be interrupted because there are too many #ifdef configurations. Checking of all #ifdef configurations can be forced by --force command line option or from GUI preferences. However that may increase the checking time." cwe="398">
+            <location file="devel/test_normalize_path.c" line="0" column="0"/>
+        </error>
+        <error id="toomanyconfigs" severity="information" msg="Too many #ifdef configurations - cppcheck only checks 12 of 14 configurations. Use --force to check all configurations." verbose="The checking of the file will be interrupted because there are too many #ifdef configurations. Checking of all #ifdef configurations can be forced by --force command line option or from GUI preferences. However that may increase the checking time." cwe="398">
+            <location file="devel/test_parse_field.c" line="0" column="0"/>
+        </error>
+        <error id="toomanyconfigs" severity="information" msg="Too many #ifdef configurations - cppcheck only checks 12 of 14 configurations. Use --force to check all configurations." verbose="The checking of the file will be interrupted because there are too many #ifdef configurations. Checking of all #ifdef configurations can be forced by --force command line option or from GUI preferences. However that may increase the checking time." cwe="398">
+            <location file="devel/test_password_equal.c" line="0" column="0"/>
+        </error>
+        <error id="unusedFunction" severity="style" msg="The function &apos;LLVMFuzzerTestOneInput&apos; is never used." verbose="The function &apos;LLVMFuzzerTestOneInput&apos; is never used." cwe="561">
+            <location file="devel/fuzz_make_safe_uri.c" line="144" column="0"/>
+            <symbol>LLVMFuzzerTestOneInput</symbol>
+        </error>
+        <error id="missingIncludeSystem" severity="information" msg="Cppcheck cannot find all the include files (use --check-config for details)" verbose="Cppcheck cannot find all the include files. Cppcheck can check the code without the include files found. But the results will probably be more accurate if all the include files are found. Please check your project&apos;s include directories and add all of them as include directories for Cppcheck. To see what files Cppcheck cannot find use --check-config."/>
+    </errors>
+</results>

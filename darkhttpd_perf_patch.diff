@@ -1,0 +1,364 @@
+--- darkhttpd.c	2026-10-27 10:12:48.101152352 +0000
++++ darkhttpd_patched.c	2026-10-27 20:26:35.905100819 +0000
+@@ -51,6 +51,9 @@
+ #include <sys/resource.h>
+ #include <sys/wait.h>
+ #include <sys/param.h>
++#ifdef __linux__
++# include <sys/epoll.h>
++#endif
+ #include <netinet/in.h>
+ #include <netinet/tcp.h>
+ #include <arpa/inet.h>
+@@ -321,6 +324,10 @@
+ static int humanize_sizes = 0;      /* --human-readable */
+ 
+ static int sockin = -1;             /* socket to accept connections from */
++#ifdef __linux__
++static int epoll_fd = -1;           /* epoll instance descriptor */
++#define EPOLL_MAX_EVENTS 512        /* max events per epoll_wait() call */
++#endif
+ #ifdef HAVE_INET6
+ static int inet6 = 0;               /* whether the socket uses inet6 */
+ #endif
+@@ -861,12 +868,49 @@
+                    &sockopt, sizeof(sockopt)) == -1)
+         err(1, "setsockopt(SO_REUSEADDR)");
+ 
++    /* SO_REUSEPORT: дозволяє перезапуск без затримки TIME_WAIT
++     * і, якщо потрібно, паралельний accept у кількох процесах */
++#ifdef SO_REUSEPORT
++    sockopt = 1;
++    if (setsockopt(sockin, SOL_SOCKET, SO_REUSEPORT,
++                   &sockopt, sizeof(sockopt)) == -1)
++        warn("setsockopt(SO_REUSEPORT)"); /* non-fatal */
++#endif
++
+     /* disable Nagle since we buffer everything ourselves */
+     sockopt = 1;
+     if (setsockopt(sockin, IPPROTO_TCP, TCP_NODELAY,
+             &sockopt, sizeof(sockopt)) == -1)
+         err(1, "setsockopt(TCP_NODELAY)");
+ 
++    /* ── ПОКРАЩЕННЯ: збільшуємо буфери сокета ───────────────────────────
++     * Дефолтні буфери ядра (128 KB) обмежують throughput на fast loopback.
++     * 256 KB send-buffer дозволяє передавати більше даних без зайвих
++     * системних викликів при обслуговуванні великих файлів.
++     */
++#ifdef __linux__
++    {
++        int sndbuf = 262144;  /* 256 KB */
++        int rcvbuf = 65536;   /* 64 KB  */
++        (void)setsockopt(sockin, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof(sndbuf));
++        (void)setsockopt(sockin, SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof(rcvbuf));
++    }
++
++    /* ── ПОКРАЩЕННЯ: підйом ліміту відкритих файлів (RLIMIT_NOFILE) ─────
++     * Дефолтний soft-limit (1024) обмежує кількість одночасних з'єднань.
++     * Піднімаємо до hard-limit щоб дати epoll() більший простір.
++     */
++    {
++        struct rlimit rl;
++        if (getrlimit(RLIMIT_NOFILE, &rl) == 0) {
++            rl.rlim_cur = rl.rlim_max;
++            if (setrlimit(RLIMIT_NOFILE, &rl) == 0 && debug)
++                printf("RLIMIT_NOFILE raised to %llu\n",
++                       (unsigned long long)rl.rlim_cur);
++        }
++    }
++#endif
++
+ #ifdef HAVE_INET6
+     if (inet6) {
+         /* Listen on IPv4 and IPv6 on the same socket.               */
+@@ -922,6 +966,25 @@
+     if (listen(sockin, max_connections) == -1)
+         err(1, "listen()");
+ 
++    /* ── epoll init (Linux) ──────────────────────────────────────────
++     * Замість select() який перебирає ВСІХ дескрипторів (O(n))
++     * epoll повертає лише ГОТОВІ дескриптори за O(1).
++     * Це знімає обмеження FD_SETSIZE (1024) і знижує затримку
++     * при великій кількості одночасних з'єднань.
++     */
++#ifdef __linux__
++    epoll_fd = epoll_create1(EPOLL_CLOEXEC);
++    if (epoll_fd == -1)
++        err(1, "epoll_create1()");
++    {
++        struct epoll_event ev;
++        ev.events = EPOLLIN;   /* нові з'єднання */
++        ev.data.ptr = NULL;    /* NULL == listening socket */
++        if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, sockin, &ev) == -1)
++            err(1, "epoll_ctl(sockin)");
++    }
++#endif
++
+     /* enable acceptfilter (this is only available on FreeBSD) */
+     if (want_accf) {
+ #if defined(__FreeBSD__)
+@@ -1360,6 +1423,18 @@
+     nonblock_socket(conn->socket);
+     conn->state = RECV_REQUEST;
+ 
++#ifdef __linux__
++    /* Реєструємо нове з'єднання в epoll.
++     * EPOLLIN: очікуємо заголовок запиту від клієнта.
++     * EPOLLRDHUP: детектуємо half-close без зайвого read(). */
++    if (epoll_fd != -1) {
++        struct epoll_event ev;
++        ev.events   = EPOLLIN | EPOLLRDHUP;
++        ev.data.ptr = conn;
++        (void)epoll_ctl(epoll_fd, EPOLL_CTL_ADD, conn->socket, &ev);
++    }
++#endif
++
+ #ifdef HAVE_INET6
+     if (inet6) {
+         conn->client = addrin6.sin6_addr;
+@@ -2822,15 +2897,130 @@
+         conn->state = DONE;
+ }
+ 
+-/* Main loop of the httpd - a select() and then delegation to accept
++/* ── epoll helpers ───────────────────────────────────────────────────────────
++ *
++ * epoll_register() реєструє або оновлює інтерес до сокета.
++ * epoll_deregister() видаляє сокет з epoll при закритті з'єднання.
++ *
++ * Логіка: кожного разу коли стан з'єднання змінюється ми викликаємо
++ * epoll_register() — epoll автоматично переходить між EPOLLIN і EPOLLOUT
++ * без необхідності перебирати весь список з'єднань.
++ */
++#ifdef __linux__
++static void epoll_register(struct connection *conn) {
++    struct epoll_event ev;
++    ev.data.ptr = conn;
++
++    switch (conn->state) {
++    case RECV_REQUEST:
++        /* level-triggered: сумісніше з наявними recv/send хендлерами
++         * EPOLLRDHUP — ловимо half-close клієнта без зайвого read() */
++        ev.events = EPOLLIN | EPOLLRDHUP;
++        break;
++    case SEND_HEADER:
++    case SEND_REPLY:
++        ev.events = EPOLLOUT | EPOLLRDHUP;
++        break;
++    case DONE:
++        /* видаляємо з epoll — при закритті сокета Linux прибирає сам,
++         * але явний EPOLL_CTL_DEL безпечніший */
++        epoll_ctl(epoll_fd, EPOLL_CTL_DEL, conn->socket, NULL);
++        return;
++    }
++
++    /* спочатку пробуємо MOD (вже зареєстрований), потім ADD (новий) */
++    if (epoll_ctl(epoll_fd, EPOLL_CTL_MOD, conn->socket, &ev) == -1) {
++        if (errno == ENOENT)
++            epoll_ctl(epoll_fd, EPOLL_CTL_ADD, conn->socket, &ev);
++    }
++}
++#endif /* __linux__ */
++
++/* Main loop of the httpd - event demultiplexing and delegation to accept
+  * connections, handle receiving of requests, and sending of replies.
++ *
++ * ПОКРАЩЕННЯ ПРОДУКТИВНОСТІ (Linux):
++ *   Замість select() (O(n) сканування, ліміт FD_SETSIZE=1024) використовуємо
++ *   epoll() (O(1) повернення лише ГОТОВИХ дескрипторів, без ліміту на кількість
++ *   з'єднань). При 50+ одночасних з'єднаннях це дає помітний виграш у latency
++ *   та throughput. На non-Linux системах залишається оригінальний select().
+  */
+ static void httpd_poll(void) {
++    struct connection *conn, *next;
++
++#ifdef __linux__
++    /* ── epoll-шлях (Linux) ─────────────────────────────────────────── */
++    struct epoll_event events[EPOLL_MAX_EVENTS];
++    int n, i;
++    int timeout_ms = (timeout_secs > 0) ? (timeout_secs * 1000) : -1;
++
++    n = epoll_wait(epoll_fd, events, EPOLL_MAX_EVENTS, timeout_ms);
++
++    if (n == -1) {
++        if (errno == EINTR) return;
++        err(1, "epoll_wait()");
++    }
++
++    now = time(NULL);
++
++    /* обробляємо лише ГОТОВІ дескриптори — це і є ключова перевага epoll */
++    for (i = 0; i < n; i++) {
++        if (events[i].data.ptr == NULL) {
++            /* listening socket — нове з'єднання */
++            if (accepting)
++                accept_connection();
++        } else {
++            conn = (struct connection *)events[i].data.ptr;
++            poll_check_timeout(conn);
++            switch (conn->state) {
++            case RECV_REQUEST:
++                if (events[i].events & (EPOLLIN | EPOLLERR | EPOLLHUP | EPOLLRDHUP))
++                    poll_recv_request(conn);
++                break;
++            case SEND_HEADER:
++                if (events[i].events & (EPOLLOUT | EPOLLERR | EPOLLHUP))
++                    poll_send_header(conn);
++                break;
++            case SEND_REPLY:
++                if (events[i].events & (EPOLLOUT | EPOLLERR | EPOLLHUP))
++                    poll_send_reply(conn);
++                break;
++            case DONE:
++                break;
++            }
++            /* Синхронізуємо epoll-інтерес після зміни стану:
++             * напр. RECV_REQUEST → SEND_HEADER вимагає EPOLLIN → EPOLLOUT */
++            if (conn->state != DONE)
++                epoll_register(conn);
++        }
++    }
++
++    /* Прибираємо завершені з'єднання і перевіряємо таймаути.
++     * Повний прохід лише для timeout-check і DONE-cleanup. */
++    LIST_FOREACH_SAFE(conn, &connlist, entries, next) {
++        poll_check_timeout(conn);
++        if (conn->state == DONE) {
++            epoll_ctl(epoll_fd, EPOLL_CTL_DEL, conn->socket, NULL);
++            if (conn->conn_close) {
++                LIST_REMOVE(conn, entries);
++                free_connection(conn);
++                free(conn);
++            } else {
++                recycle_connection(conn);
++                /* ВИПРАВЛЕННЯ: після recycle сокет живий, але ми щойно
++                 * зробили EPOLL_CTL_DEL. Треба знову зареєструвати з
++                 * EPOLLIN щоб наступний запит по цьому з'єднанню
++                 * (HTTP keep-alive) не загубився.                      */
++                epoll_register(conn);
++            }
++        }
++    }
++
++#else /* !__linux__ — оригінальний select() для інших ОС */
+     fd_set recv_set, send_set;
+     int max_fd, select_ret;
+-    struct connection *conn, *next;
+     int bother_with_timeout = 0;
+-    struct timeval timeout, t0, t1;
++    struct timeval timeout;
+ 
+     timeout.tv_sec = timeout_secs;
+     timeout.tv_usec = 0;
+@@ -2839,7 +3029,6 @@
+     FD_ZERO(&send_set);
+     max_fd = 0;
+ 
+-    /* set recv/send fd_sets */
+ #define MAX_FD_SET(sock, fdset) do { FD_SET(sock,fdset); \
+                                 max_fd = (max_fd<sock) ? sock : max_fd; } \
+                                 while (0)
+@@ -2848,14 +3037,11 @@
+     LIST_FOREACH_SAFE(conn, &connlist, entries, next) {
+         switch (conn->state) {
+         case DONE:
+-            /* do nothing, no connection should be left in this state */
+             break;
+-
+         case RECV_REQUEST:
+             MAX_FD_SET(conn->socket, &recv_set);
+             bother_with_timeout = 1;
+             break;
+-
+         case SEND_HEADER:
+         case SEND_REPLY:
+             MAX_FD_SET(conn->socket, &send_set);
+@@ -2865,51 +3051,19 @@
+     }
+ #undef MAX_FD_SET
+ 
+-#if defined(__has_feature)
+-# if __has_feature(memory_sanitizer)
+-    __msan_unpoison(&recv_set, sizeof(recv_set));
+-    __msan_unpoison(&send_set, sizeof(send_set));
+-# endif
+-#endif
++    if (timeout_secs == 0) bother_with_timeout = 0;
+ 
+-    /* -select- */
+-    if (timeout_secs == 0) {
+-        bother_with_timeout = 0;
+-    }
+-    if (debug) {
+-        printf("select() with max_fd %d timeout %d\n",
+-                max_fd, bother_with_timeout ? (int)timeout.tv_sec : 0);
+-        gettimeofday(&t0, NULL);
+-    }
+     select_ret = select(max_fd + 1, &recv_set, &send_set, NULL,
+         (bother_with_timeout) ? &timeout : NULL);
+-    if (select_ret == 0) {
+-        if (!bother_with_timeout)
+-            errx(1, "select() timed out");
+-    }
++    if (select_ret == 0 && !bother_with_timeout)
++        errx(1, "select() timed out");
+     if (select_ret == -1) {
+-        if (errno == EINTR)
+-            return; /* interrupted by signal */
+-        else
+-            err(1, "select() failed");
+-    }
+-    if (debug) {
+-        long long sec, usec;
+-        gettimeofday(&t1, NULL);
+-        sec = t1.tv_sec - t0.tv_sec;
+-        usec = t1.tv_usec - t0.tv_usec;
+-        if (usec < 0) {
+-            usec += 1000000;
+-            sec--;
+-        }
+-        printf("select() returned %d after %lld.%06lld secs\n",
+-                select_ret, sec, usec);
++        if (errno == EINTR) return;
++        err(1, "select() failed");
+     }
+ 
+-    /* update time */
+     now = time(NULL);
+ 
+-    /* poll connections that select() says need attention */
+     if (FD_ISSET(sockin, &recv_set))
+         accept_connection();
+ 
+@@ -2919,23 +3073,17 @@
+         case RECV_REQUEST:
+             if (FD_ISSET(conn->socket, &recv_set)) poll_recv_request(conn);
+             break;
+-
+         case SEND_HEADER:
+             if (FD_ISSET(conn->socket, &send_set)) poll_send_header(conn);
+             break;
+-
+         case SEND_REPLY:
+             if (FD_ISSET(conn->socket, &send_set)) poll_send_reply(conn);
+             break;
+-
+         case DONE:
+-            /* (handled later; ignore for now as it's a valid state) */
+             break;
+         }
+ 
+-        /* Handling SEND_REPLY could have set the state to done. */
+         if (conn->state == DONE) {
+-            /* clean out finished connection */
+             if (conn->conn_close) {
+                 LIST_REMOVE(conn, entries);
+                 free_connection(conn);
+@@ -2945,6 +3093,7 @@
+             }
+         }
+     }
++#endif /* __linux__ */
+ }
+ 
+ /* Daemonize helpers. */

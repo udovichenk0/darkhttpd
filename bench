@@ -1,0 +1,31 @@
+#!/bin/bash
+
+pkill -9 darkhttpd 2>/dev/null; sleep 1
+
+bench() {
+  local BIN=$1 LABEL=$2
+  setsid $BIN ~/darkhttpd-master/perf --port 8084 --daemon
+  sleep 1
+  printf "\n=== %-45s ===\n" "$LABEL"
+  printf "%-14s %-6s %-12s %-10s %-10s\n" "Файл" "Conn" "Req/s" "Latency" "Errors"
+  printf "%s\n" "--------------------------------------------------------------"
+  for CONNS in 100 500; do
+    for FILE in small large; do
+      R=$(wrk -t4 -c${CONNS} -d10s http://localhost:8084/${FILE}.html 2>&1)
+      RPS=$(echo "$R" | grep "Requests/sec" | awk '{print $2}')
+      LAT=$(echo "$R" | grep "Latency " | awk '{print $2}')
+      ERR=$(echo "$R" | grep "Socket errors" | awk -F'timeout ' '{print $2}' | awk '{print $1}')
+      ERR=${ERR:-0}
+      printf "%-14s %-6s %-12s %-10s timeout=%-5s\n" \
+        "${FILE}.html" "$CONNS" "$RPS" "$LAT" "$ERR"
+    done
+  done
+  pkill -9 darkhttpd 2>/dev/null; sleep 1
+}
+
+bench ~/darkhttpd-master/darkhttpd_epoll \
+      "ПАТЧЕНА    epoll()   O(1) + SO_REUSEPORT + buf"
+bench ~/darkhttpd-master/darkhttpd \
+      "ОРИГІНАЛ   select()  O(n)"
+# bench ~/darkhttpd-master/darkhttpd_epoll \
+#       "ПАТЧЕНА    epoll()   O(1) + SO_REUSEPORT + buf"
